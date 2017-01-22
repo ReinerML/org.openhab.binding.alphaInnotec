@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<thing:thing-descriptions bindingId="AlphaInnotec" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:thing="http://eclipse.org/smarthome/schemas/thing-description/v1.0.0"
+	xsi:schemaLocation="http://eclipse.org/smarthome/schemas/thing-description/v1.0.0 http://eclipse.org/smarthome/schemas/thing-description-1.0.0.xsd">
+
+	<!-- heatPump Thing Type -->
+	<thing-type id="heatPump">
+		<label>AlphaInnotec LLB317+</label>
+		<description>Provides status information of the air source heat pump AlphaInnotec LLB317+</description>
+
+		<channels>
+			<channel typeId="tempAmbientAir" id="tempAmbientAir"></channel>
+			<channel typeId="tempInletAir" id="tempInletAir"></channel>
+			<channel typeId="tempExhaustAir" id="tempExhaustAir"></channel>
+			<channel typeId="tempHeatExchangeAir" id="tempHeatExchangeAir"></channel>
+			<channel typeId="tempCoolingPlate" id="tempCoolingPlate"></channel>
+			<channel typeId="tempTapWaterTop" id="tempTapWaterTop"></channel>
+			<channel typeId="tempTapWaterBottom" id="tempTapWaterBottom"></channel>
+			<channel typeId="tempExtStorageUnit" id="tempExtStorageUnit"></channel>
+			<channel typeId="fanStage" id="fanStage"></channel>
+            <channel typeId="currentStatus" id="currentStatus"></channel>			
+		</channels>
+		<config-description>
+			<parameter name="serialDevice" type="text" required="true">
+				<label>Serial Device</label>
+				<default>/dev/ttyAMA0</default>
+			</parameter>
+		</config-description>
+	</thing-type>
+	<channel-type id="tempAmbientAir">
+		<item-type>Number</item-type>
+		<label>Temperature ambient air</label>
+		<description>air temperature in degrees celsius</description>
+		<category>Temperature</category>
+		<state readOnly="true" pattern="%.1f °C"></state>
+	</channel-type>
+	<channel-type id="tempInletAir">
+		<item-type>Number</item-type>
+		<label>Temperature inlet air</label>
+		<description>air temperature in degrees celsius</description>
+		<category>Temperature</category>
+		<state readOnly="true" pattern="%.1f °C"></state>
+	</channel-type>
+	<channel-type id="tempExhaustAir">
+		<item-type>Number</item-type>
+		<label>Temperature exhaust air</label>
+		<description>air temperature in degrees celsius</description>
+		<category>Temperature</category>
+		<state readOnly="true" pattern="%.1f °C"></state>
+	</channel-type>
+	<channel-type id="tempHeatExchangeAir">
+		<item-type>Number</item-type>
+		<label>Temperature heat exchange air</label>
+		<description>air temperature in degrees celsius</description>
+		<category>Temperature</category>
+		<state readOnly="true" pattern="%.1f °C"></state>
+	</channel-type>
+	<channel-type id="tempCoolingPlate">
+		<item-type>Number</item-type>
+		<label>Temperature cooling plate</label>
+		<description>temperature in degrees celsius</description>
+		<category>Temperature</category>
+		<state readOnly="true" pattern="%.1f °C"></state>
+	</channel-type>
+	<channel-type id="tempTapWaterTop">
+		<item-type>Number</item-type>
+		<label>Temperature tap water top</label>
+		<description>water temperature in degrees celsius</description>
+		<category>Temperature</category>
+		<state readOnly="true" pattern="%.1f °C"></state>
+	</channel-type>
+	<channel-type id="tempTapWaterBottom">
+		<item-type>Number</item-type>
+		<label>Temperature tap water bottom</label>
+		<description>water temperature in degrees celsius</description>
+		<category>Temperature</category>
+		<state readOnly="true" pattern="%.1f °C"></state>
+	</channel-type>
+	<channel-type id="tempExtStorageUnit">
+		<item-type>Number</item-type>
+		<label>Temperature external storage unit</label>
+		<description>water temperature in degrees celsius</description>
+		<category>Temperature</category>
+		<state readOnly="true" pattern="%.1f °C"></state>
+	</channel-type>
+	<channel-type id="fanStage">
+        <item-type>Number</item-type>
+        <label>Fan stage</label>
+        <description>fan stage</description>
+        <state readOnly="true"></state>
+    </channel-type>
+	<channel-type id="currentStatus">
+		<item-type>String</item-type>
+		<label>Status</label>
+		<description>Status of the heat pump</description>
+		<state readOnly="true"></state>
+	</channel-type>
+</thing:thing-descriptions>

@@ -1,0 +1,348 @@
+/**
+ * Copyright (c) 2010-2016 by the respective copyright holders.
+ *
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * which accompanies this distribution, and is available at
+ * http://www.eclipse.org/legal/epl-v10.html
+ */
+//package org.openhab.binding.serial.internal;
+package org.openhab.binding.alphaInnotec.internal;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.Enumeration;
+import java.util.TooManyListenersException;
+
+import org.eclipse.smarthome.core.library.types.DecimalType;
+import org.eclipse.smarthome.core.library.types.StringType;
+import org.eclipse.smarthome.core.thing.ThingStatus;
+import org.eclipse.smarthome.core.thing.ThingStatusDetail;
+import org.openhab.binding.alphaInnotec.AlphaInnotecBindingConstants;
+import org.openhab.binding.alphaInnotec.handler.AlphaInnotecHandler;
+//import org.apache.commons.codec.binary.Base64;
+//import org.apache.commons.io.IOUtils;
+//import org.openhab.core.events.EventPublisher;
+//import org.openhab.core.library.items.NumberItem;
+//import org.openhab.core.library.items.StringItem;
+//import org.openhab.core.library.items.SwitchItem;
+//import org.openhab.core.library.types.DecimalType;
+//import org.openhab.core.library.types.OnOffType;
+//import org.openhab.core.library.types.StringType;
+//import org.openhab.core.transform.TransformationException;
+//import org.openhab.core.transform.TransformationService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import gnu.io.CommPortIdentifier;
+import gnu.io.PortInUseException;
+import gnu.io.SerialPort;
+import gnu.io.SerialPortEvent;
+import gnu.io.SerialPortEventListener;
+import gnu.io.UnsupportedCommOperationException;
+
+/**
+ * This class provides status information of the air source heat pump AlphaInnotec LLB317+
+ *
+ * @author Reiner Maass
+ *
+ */
+public class AlphaInnotecSerial implements SerialPortEventListener {
+
+    private static final Logger logger = LoggerFactory.getLogger(AlphaInnotecSerial.class);
+
+    private String port;
+
+    private boolean inSync = false;
+    private boolean dataExtracted = false;
+    private int wordIndex = 0;
+    private short frame[][];
+    private short wordLast[];
+
+    private CommPortIdentifier portId;
+    private SerialPort serialPort;
+
+    private InputStream inputStream;
+
+    private OutputStream outputStream;
+
+    private String[] state = { "defrosting", "water heating", "fan heater", "room cooling", "0x10", "heating rod",
+            "0x40", "heat pump" };
+
+    private AlphaInnotecHandler parent;
+
+    public AlphaInnotecSerial(AlphaInnotecHandler parent, String port) {
+        frame = new short[110][2];
+        wordLast = new short[2];
+        this.port = port;
+        this.parent = parent;
+    }
+
+    /**
+     * Initialize this device and open the serial port
+     *
+     * @throws InitializationException if port can not be opened
+     */
+    @SuppressWarnings("rawtypes")
+    public void initialize() throws InitializationException {
+        // parse ports and if the default port is found, initialized the reader
+        Enumeration portList = CommPortIdentifier.getPortIdentifiers();
+        while (portList.hasMoreElements()) {
+            CommPortIdentifier id = (CommPortIdentifier) portList.nextElement();
+            if (id.getPortType() == CommPortIdentifier.PORT_SERIAL) {
+                if (id.getName().equals(port)) {
+                    logger.debug("Serial port '{}' has been found.", port);
+                    portId = id;
+                }
+            }
+        }
+        if (portId != null) {
+            // initialize serial port
+            try {
+                serialPort = portId.open("openHAB", 2000);
+            } catch (PortInUseException e) {
+                throw new InitializationException(e);
+            }
+
+            try {
+                inputStream = serialPort.getInputStream();
+            } catch (IOException e) {
+                throw new InitializationException(e);
+            }
+
+            try {
+                serialPort.addEventListener(this);
+            } catch (TooManyListenersException e) {
+                throw new InitializationException(e);
+            }
+
+            // activate the DATA_AVAILABLE notifier
+            serialPort.notifyOnDataAvailable(true);
+
+            try {
+                // set port parameters
+                serialPort.setSerialPortParams(AlphaInnotecBindingConstants.BAUD_RATE, SerialPort.DATABITS_8,
+                        SerialPort.STOPBITS_1, SerialPort.PARITY_NONE);
+            } catch (UnsupportedCommOperationException e) {
+                throw new InitializationException(e);
+            }
+
+            try {
+                // get the output stream
+                outputStream = serialPort.getOutputStream();
+            } catch (IOException e) {
+                throw new InitializationException(e);
+            }
+        } else {
+            StringBuilder sb = new StringBuilder();
+            portList = CommPortIdentifier.getPortIdentifiers();
+            while (portList.hasMoreElements()) {
+                CommPortIdentifier id = (CommPortIdentifier) portList.nextElement();
+                if (id.getPortType() == CommPortIdentifier.PORT_SERIAL) {
+                    sb.append(id.getName() + "\n");
+                }
+            }
+            throw new InitializationException(
+                    "Serial port '" + port + "' could not be found. Available ports are:\n" + sb.toString());
+        }
+    }
+
+    @Override
+    public void serialEvent(SerialPortEvent event) {
+        switch (event.getEventType()) {
+            case SerialPortEvent.BI:
+            case SerialPortEvent.OE:
+            case SerialPortEvent.FE:
+            case SerialPortEvent.PE:
+            case SerialPortEvent.CD:
+            case SerialPortEvent.CTS:
+            case SerialPortEvent.DSR:
+            case SerialPortEvent.RI:
+            case SerialPortEvent.OUTPUT_BUFFER_EMPTY:
+                break;
+            case SerialPortEvent.DATA_AVAILABLE:
+                // we get here if data has been received
+                try {
+                    byte[] readBuffer = new byte[20];
+                    // read data from serial device
+                    int bufferIn = inputStream.read(readBuffer);
+                    if (bufferIn == 2) {
+                        assembleFrame(readBuffer);
+                    }
+                } catch (IOException e) {
+                    logger.debug("Error receiving data on serial port {}: {}", new String[] { port, e.getMessage() });
+                }
+                break;
+        }
+    }
+
+    /**
+     * Sends a string to the serial port of this device
+     *
+     * @param msg the string to send
+     */
+    // public void writeString(String msg) {
+    // logger.debug("Writing '{}' to serial port {}", new String[] { msg, port });
+    // try {
+    // // write string to serial port
+    // // if (msg.startsWith("BASE64:")) {
+    // // outputStream.write(Base64.decodeBase64(msg.substring(7, msg.length())));
+    // // } else {
+    // outputStream.write(msg.getBytes());
+    // // }
+    //
+    // outputStream.flush();
+    // } catch (IOException e) {
+    // logger.error("Error writing '{}' to serial port {}: {}", new String[] { msg, port, e.getMessage() });
+    // }
+    // }
+
+    private void assembleFrame(byte[] wordIn) {
+        final short[] emptyWord = { 0, 0 };
+        final short wordInLow = (short) Byte.toUnsignedInt(wordIn[0]);
+        final short wordInHigh = (short) Byte.toUnsignedInt(wordIn[1]);
+
+        // word to compare received?
+        if ((wordLast[0] == emptyWord[0]) && (wordLast[1] == emptyWord[1])) {
+            wordLast[0] = wordInLow;
+            wordLast[1] = wordInHigh;
+        } else {
+            // Sync received?
+            if ((wordLast[0] == 0xff) && (wordLast[1] < 3)) {
+                if (!inSync) {
+                    parent.updateStatus(ThingStatus.ONLINE, ThingStatusDetail.NONE, "SYNC frame received");
+                    logger.debug("SYNC empfangen");
+                    inSync = true;
+                }
+                wordIndex = 0;
+                dataExtracted = false;
+            }
+            frame[wordIndex][0] = wordLast[0];
+            frame[wordIndex][1] = wordLast[1];
+            wordIndex++;
+
+            if ((wordLast[0] == wordInLow) && (wordLast[1] == wordInHigh)) {
+                // copy received
+                wordLast[0] = emptyWord[0];
+                wordLast[1] = emptyWord[1];
+            } else {
+                // new word received
+                wordLast[0] = wordInLow;
+                wordLast[1] = wordInHigh;
+            }
+        }
+        // logger.debug(" 0x0" + Integer.toHexString(wordIn[0]) + " 0x0" + Integer.toHexString(wordIn[1]));
+
+        if (wordIndex > 109) {
+            if (inSync) {
+                inSync = false;
+                parent.updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR, "SYNC frame missing!");
+                logger.error("SYNC lost!");
+            }
+            wordIndex = 0;
+        }
+
+        // Data available?
+        if ((wordIndex == 19) && inSync && !dataExtracted) {
+            extractDataFromFrame();
+            dataExtracted = true;
+        }
+
+    }
+
+    private void extractDataFromFrame() {
+
+        float temp = calculateTemp(frame[AlphaInnotecBindingConstants.INDEX_TEMP_AMBIENT_AIR][1],
+                frame[AlphaInnotecBindingConstants.INDEX_TEMP_AMBIENT_AIR + 1][1]);
+        logger.debug("temperature ambient air: " + Float.toString(temp) + " °C");
+        parent.publishData(AlphaInnotecBindingConstants.CHANNEL_TEMP_AMBIENT_AIR,
+                new DecimalType(Float.toString(temp)));
+
+        temp = calculateTemp(frame[AlphaInnotecBindingConstants.INDEX_TEMP_INLET_AIR][1],
+                frame[AlphaInnotecBindingConstants.INDEX_TEMP_INLET_AIR + 1][1]);
+        logger.debug("temperature inlet air: " + Float.toString(temp) + " °C");
+        parent.publishData(AlphaInnotecBindingConstants.CHANNEL_TEMP_INLET_AIR, new DecimalType(Float.toString(temp)));
+
+        temp = calculateTemp(frame[AlphaInnotecBindingConstants.INDEX_TEMP_EXHAUST_AIR][1],
+                frame[AlphaInnotecBindingConstants.INDEX_TEMP_EXHAUST_AIR + 1][1]);
+        logger.debug("temperature exhaust air: " + Float.toString(temp) + " °C");
+        parent.publishData(AlphaInnotecBindingConstants.CHANNEL_TEMP_EXHAUST_AIR,
+                new DecimalType(Float.toString(temp)));
+
+        temp = calculateTemp(frame[AlphaInnotecBindingConstants.INDEX_TEMP_HEAT_EXCHANGE_AIR][1],
+                frame[AlphaInnotecBindingConstants.INDEX_TEMP_HEAT_EXCHANGE_AIR + 1][1]);
+        logger.debug("temperature heat exchange air: " + Float.toString(temp) + " °C");
+        parent.publishData(AlphaInnotecBindingConstants.CHANNEL_TEMP_HEAT_EXCHANGE_AIR,
+                new DecimalType(Float.toString(temp)));
+
+        temp = calculateTemp(frame[AlphaInnotecBindingConstants.INDEX_TEMP_COOLING_PLATE][1],
+                frame[AlphaInnotecBindingConstants.INDEX_TEMP_COOLING_PLATE + 1][1]);
+        logger.debug("temperature cooling plate: " + Float.toString(temp) + " °C");
+        parent.publishData(AlphaInnotecBindingConstants.CHANNEL_TEMP_COOLING_PLATE,
+                new DecimalType(Float.toString(temp)));
+
+        temp = calculateTemp(frame[AlphaInnotecBindingConstants.INDEX_TEMP_TAP_WATER_TOP][1],
+                frame[AlphaInnotecBindingConstants.INDEX_TEMP_TAP_WATER_TOP + 1][1]);
+        logger.debug("temperature tap water top: " + Float.toString(temp) + " °C");
+        parent.publishData(AlphaInnotecBindingConstants.CHANNEL_TEMP_TAP_WATER_TOP,
+                new DecimalType(Float.toString(temp)));
+
+        temp = calculateTemp(frame[AlphaInnotecBindingConstants.INDEX_TEMP_TAP_WATER_BOTTOM][1],
+                frame[AlphaInnotecBindingConstants.INDEX_TEMP_TAP_WATER_BOTTOM + 1][1]);
+        logger.debug("temperature tap water bottom: " + Float.toString(temp) + " °C");
+        parent.publishData(AlphaInnotecBindingConstants.CHANNEL_TEMP_TAP_WATER_BOTTOM,
+                new DecimalType(Float.toString(temp)));
+
+        temp = calculateTemp(frame[AlphaInnotecBindingConstants.INDEX_TEMP_EXT_STORAGE_UNIT][1],
+                frame[AlphaInnotecBindingConstants.INDEX_TEMP_EXT_STORAGE_UNIT + 1][1]);
+        logger.debug("temperature ext. storage unit: " + Float.toString(temp) + " °C");
+        parent.publishData(AlphaInnotecBindingConstants.CHANNEL_TEMP_EXT_STORAGE_UNIT,
+                new DecimalType(Float.toString(temp)));
+
+        int statusField = frame[AlphaInnotecBindingConstants.INDEX_CURRENT_STATUS][1];
+
+        short index = 0;
+        String msg = "";// "0x" + Integer.toHexString(statusField) + ": ";
+        boolean needDelimiter = false;
+
+        if (statusField == 0) {
+            msg = "on";
+        } else {
+            do {
+                if ((statusField & 0x01) != 0) {
+                    if (needDelimiter) {
+                        msg = msg + ", ";
+                    }
+                    msg = msg + state[index];
+                    needDelimiter = true;
+                }
+                statusField = statusField >> 1;
+                index++;
+            } while (statusField != 0);
+        }
+        logger.debug(msg);
+        parent.publishData(AlphaInnotecBindingConstants.CHANNEL_CURRENT_STATUS, new StringType(msg));
+
+        String fanStage = Integer.toString(frame[AlphaInnotecBindingConstants.INDEX_FAN_STAGE][1]);
+        logger.debug("fan stage (0-3): " + fanStage);
+        parent.publishData(AlphaInnotecBindingConstants.CHANNEL_FAN_STAGE, new DecimalType(fanStage));
+    }
+
+    private float calculateTemp(final short tempHigh, final short tempLow) {
+        float result = tempHigh * 256.0F;
+        result += tempLow;
+        result = (result / 10) - 30;
+        return result;
+    }
+
+    /**
+     * Close this serial device
+     */
+    public void close() {
+        serialPort.removeEventListener();
+        // IOUtils.closeQuietly(inputStream);
+        // IOUtils.closeQuietly(outputStream);
+        serialPort.close();
+    }
+}
